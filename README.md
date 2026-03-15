@@ -186,7 +186,8 @@ If `py -3.13` is not available, install the non–free-threaded Python 3.13 from
 - `scripts/clock_display.py` – async HH:MM clock (supports 12/24h, dot flashing, themes). Exit with `Ctrl+C` so the BLE session closes cleanly and you can relaunch immediately.
 - `scripts/display_text.py` – text rendering entrypoint.
   - `--mode static`: regular rendered frame via legacy image path.
-  - `--mode scroll`: **native 5-packet text path** (single lightweight BLE session).
+  - `--mode scroll`: native panel-side scroll path.
+  - auto transport uses the validated **A1/type-4 route** for all text lengths.
   - supports `--color`, `--background`, and `--effect` (`fixed`, `scroll-left`, `scroll-right`, `blinking`, `breathing`, `snowflake`, `laser`).
 
   Launch examples:
@@ -196,13 +197,16 @@ If `py -3.13` is not available, install the non–free-threaded Python 3.13 from
   python scripts/display_text.py "HI" --mode scroll --effect laser --color "#00ff00" --background "#000000"
   ```
 
-- `scripts/native_text_scroll_send.py` – low-level native text sender (5 packets).
+- `scripts/native_text_scroll_send.py` – low-level native text sender.
   - useful for protocol testing and effect validation.
-  - current packet format uses a 2-char payload window.
+  - default route is A1/type-4 for all lengths.
+  - `--transport 45|f9|a1` remains available for debug/compat tests.
+  - long payloads are sent as chunked continuation writes with verbose chunk logging.
 
   ```bash
   python scripts/native_text_scroll_send.py "HI" --effect blinking --color "#ffffff"
   python scripts/native_text_scroll_send.py "HI" --effect scroll-right --font-profile ipixel
+  python scripts/native_text_scroll_send.py "THIS IS A LONGER NATIVE SCROLL MESSAGE" --effect scroll-left --verbose
   ```
 
 - `scripts/send_image.py` – uploads any image with fit/cover/scale + rotate/mirror/invert.
