@@ -14,6 +14,21 @@ from bk_light.config import AppConfig, load_config, text_options
 from bk_light.fonts import get_font_profile, resolve_font
 from bk_light.panel_manager import PanelManager
 from bk_light.text import build_text_bitmap
+from bk_light.display_session import BleDisplaySession, UUID_WRITE
+from scripts.native_text_scroll_send import (
+    EFFECT_CODES,
+    REVERSE_FOR_EFFECT,
+    TRANSPORT_A1,
+    TRANSPORT_F9,
+    packet_debug_info,
+    build_content_payload,
+    build_a1_payload,
+    build_handshake,
+    build_long_text_payload,
+    choose_transport,
+    chunk_payload,
+    text_windows,
+)
 
 
 def parse_color(value: Optional[str]) -> Optional[tuple[int, int, int]]:
@@ -68,35 +83,86 @@ def render_scroll_frame(
     return frame.convert("RGB")
 
 
-def precompute_scroll_frames(
-    canvas: tuple[int, int],
-    text_bitmap: Image.Image,
-    background: tuple[int, int, int],
-    direction: str,
-    gap: int,
-    offset_x: int,
-    offset_y: int,
-    step: int,
-) -> list[Image.Image]:
-    strip_width = max(1, text_bitmap.width + gap)
-    frame_positions = list(range(0, strip_width, max(1, step)))
-    if not frame_positions:
-        frame_positions = [0]
-    frames: list[Image.Image] = []
-    for position in frame_positions:
-        frames.append(
-            render_scroll_frame(
-                canvas,
-                text_bitmap,
-                background,
-                direction,
-                gap,
-                offset_x,
-                offset_y,
-                position,
+async def send_native_scroll(
+    config: AppConfig,
+    message: str,
+    channel: int = 3,
+    interval: float = 0.06,
+    fg_color: tuple[int, int, int] = (255, 255, 255),
+    bg_color: tuple[int, int, int] = (0, 0, 0),
+    effect: str = "scroll-left",
+) -> None:
+    effect_code = EFFECT_CODES.get(effect, EFFECT_CODES["scroll-left"])
+    windows = text_windows(message)
+    mode = choose_transport(message)
+    async with BleDisplaySession(address=config.device.address, log_notifications=False) as session:
+        for pkt in (
+            build_handshake(),
+            bytes.fromhex("04000580"),
+            bytes.fromhex("0500128007"),
+            bytes.fromhex(f"070008800100{channel:02x}"),
+        ):
+            await session.client.write_gatt_char(UUID_WRITE, pkt, response=False)
+            await asyncio.sleep(interval)
+
+        if mode == TRANSPORT_A1:
+            payload = build_a1_payload(
+                message,
+                fg_color=fg_color,
+                bg_color=bg_color,
+                effect_code=effect_code,
             )
-        )
-    return frames
+            debug = packet_debug_info(payload, mode, message)
+            print(
+                f"native-text route={debug['route']} chars={debug['chars']} body_len={debug['body_len']} "
+                f"packet_len={debug['packet_len']} chunks={debug['chunk_count']} "
+                f"crc=0x{debug['crc']:08x}"
+            )
+            for chunk in chunk_payload(payload):
+                await session.client.write_gatt_char(UUID_WRITE, chunk, response=False)
+                await asyncio.sleep(interval)
+        elif mode == TRANSPORT_F9:
+            payload = build_long_text_payload(
+                message,
+                channel,
+                fg_color=fg_color,
+                bg_color=bg_color,
+                effect_code=effect_code,
+            )
+            debug = packet_debug_info(payload, mode, message)
+            print(
+                f"native-text route={debug['route']} chars={debug['chars']} body_len={debug['body_len']} "
+                f"packet_len={debug['packet_len']} chunks={debug['chunk_count']} "
+                f"crc=0x{debug['crc']:08x}"
+            )
+            await session.client.write_gatt_char(UUID_WRITE, payload, response=False)
+            await asyncio.sleep(interval)
+        else:
+            sample_payload = build_content_payload(
+                windows[0][::-1] if effect in REVERSE_FOR_EFFECT else windows[0],
+                channel,
+                fg_color=fg_color,
+                bg_color=bg_color,
+                effect_code=effect_code,
+            )
+            debug = packet_debug_info(sample_payload, mode, message)
+            print(
+                f"native-text route={debug['route']} chars={debug['chars']} body_len={debug['body_len']} "
+                f"packet_len={debug['packet_len']} chunks={len(windows)} "
+                f"crc=0x{debug['crc']:08x}"
+            )
+            for window in windows:
+                visible = window[::-1] if effect in REVERSE_FOR_EFFECT else window
+                payload5 = build_content_payload(
+                    visible,
+                    channel,
+                    fg_color=fg_color,
+                    bg_color=bg_color,
+                    effect_code=effect_code,
+                )
+                await session.client.write_gatt_char(UUID_WRITE, payload5, response=False)
+                await asyncio.sleep(0.22 if len(windows) > 1 else interval)
+
 
 async def display_text(config: AppConfig, message: str, preset_name: str, overrides: dict[str, Optional[str]]) -> None:
     preset = text_options(config, preset_name, overrides)
@@ -127,74 +193,21 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
     offset_y_base = preset.offset_y + profile.offset_y
     try:
         if preset.mode == "scroll":
-            gap_override = overrides.get("gap")
-            base_gap = gap_override if gap_override is not None else preset.gap
-            gap = int(base_gap) if base_gap is not None else 16
-            strip_width = max(1, text_bitmap.width + gap)
-            step_override = overrides.get("step")
-            base_step = step_override if step_override is not None else preset.step
-            step_value = int(base_step) if base_step is not None else 1
-            step = max(1, step_value)
-            interval_override = overrides.get("interval")
-            interval = float(interval_override) if interval_override is not None else float(preset.interval)
-            if interval <= 0:
-                interval = 0.02
-            interval = max(interval, 0.008)
-
-            # Keep a persistent BLE session for smooth scrolling.
-            # Periodic reconnects introduce visible freezes on ACT1025.
-            next_tick = asyncio.get_running_loop().time()
-            async with PanelManager(config) as manager:
-                canvas = manager.canvas_size
-                # Build one full animation cycle once, then replay it in a loop.
-                # This removes per-frame rasterization jitter and mimics an "array of frames" pipeline.
-                frames = precompute_scroll_frames(
-                    canvas,
-                    text_bitmap,
-                    background,
-                    preset.direction,
-                    gap,
-                    offset_x_base,
-                    offset_y_base,
-                    step,
-                )
-                frame_index = 0
-                loop_guard_counter = 0
-                while True:
-                    frame = frames[frame_index]
-                    # Small transport delay avoids overdriving BLE writes (reduces end-of-run freezes).
-                    await manager.send_image(frame, delay=0.01)
-                    frame_index = (frame_index + 1) % len(frames)
-
-                    # Guardrail: brief pause at full-cycle boundaries helps avoid firmware lockups.
-                    if frame_index == 0:
-                        loop_guard_counter += 1
-                        if loop_guard_counter % 1 == 0:
-                            await asyncio.sleep(0.04)
-
-                    # Target a steady frame cadence while avoiding busy loops.
-                    next_tick += interval
-                    sleep_for = next_tick - asyncio.get_running_loop().time()
-                    if sleep_for > 0:
-                        await asyncio.sleep(sleep_for)
-                    else:
-                        # If BLE is slower than target cadence, resync to 'now'.
-                        next_tick = asyncio.get_running_loop().time()
+            # Native panel-side scroll path with automatic transport selection.
+            effect = overrides.get("effect") or "scroll-left"
+            await send_native_scroll(
+                config,
+                message,
+                channel=3,
+                interval=0.06,
+                fg_color=color,
+                bg_color=background,
+                effect=effect,
+            )
+            await asyncio.sleep(0.2)
         else:
             async with PanelManager(config) as manager:
                 canvas = manager.canvas_size
-                # Auto-fit static text so it doesn't clip on small displays (e.g. 64x16)
-                while text_bitmap.width > (canvas[0] - 2) and size > 11:
-                    size -= 1
-                    text_bitmap = build_text_bitmap(
-                        message,
-                        font_path,
-                        size,
-                        spacing,
-                        color,
-                        config.display.antialias_text,
-                        monospace_digits=True,
-                    )
                 frame = render_static_frame(
                     canvas,
                     text_bitmap,
@@ -202,8 +215,8 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
                     offset_x_base,
                     offset_y_base,
                 )
-                await manager.send_image(frame, delay=0.0)
-                await asyncio.sleep(0.1)
+                await manager.send_image(frame, delay=0.15)
+                await asyncio.sleep(0.2)
     except asyncio.CancelledError:
         raise
     except Exception as error:
@@ -223,6 +236,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--spacing", type=int)
     parser.add_argument("--mode", choices=("static", "scroll"))
     parser.add_argument("--direction", choices=("left", "right"))
+    parser.add_argument(
+        "--effect",
+        choices=("fixed", "scroll-left", "scroll-right", "blinking", "breathing", "snowflake", "laser"),
+    )
     parser.add_argument("--speed", type=float)
     parser.add_argument("--gap", type=int)
     parser.add_argument("--step", type=int)
@@ -241,6 +258,7 @@ def build_override_map(args: argparse.Namespace) -> dict[str, Optional[str]]:
         "spacing": args.spacing,
         "mode": args.mode,
         "direction": args.direction,
+        "effect": args.effect,
         "speed": args.speed,
         "gap": args.gap,
         "step": args.step,
@@ -261,4 +279,3 @@ if __name__ == "__main__":
         asyncio.run(display_text(config, args.text, preset_name, overrides))
     except KeyboardInterrupt:
         pass
-
