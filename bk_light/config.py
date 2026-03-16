@@ -236,7 +236,7 @@ def _build_text_presets(data: Dict[str, Dict[str, Any]]) -> Dict[str, TextPreset
     presets: Dict[str, TextPreset] = {}
     for name, values in data.items():
         preset = TextPreset(**values)
-        if preset.mode not in {"static", "scroll"}:
+        if preset.mode not in {"static", "scroll", "native-scroll"}:
             preset = replace(preset, mode="static")
         if preset.direction not in {"left", "right"}:
             preset = replace(preset, direction="left")
@@ -411,7 +411,7 @@ def text_options(config: AppConfig, preset_name: str, overrides: Dict[str, Any])
         else:
             data[key] = value
     preset = TextPreset(**data)
-    if preset.mode not in {"static", "scroll"}:
+    if preset.mode not in {"static", "scroll", "native-scroll"}:
         preset = replace(preset, mode="static")
     if preset.direction not in {"left", "right"}:
         preset = replace(preset, direction="left")

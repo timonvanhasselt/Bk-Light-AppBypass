@@ -77,6 +77,37 @@ def render_scroll_frame(
     return frame.convert("RGB")
 
 
+def precompute_scroll_frames(
+    canvas: tuple[int, int],
+    text_bitmap: Image.Image,
+    background: tuple[int, int, int],
+    direction: str,
+    gap: int,
+    offset_x: int,
+    offset_y: int,
+    step: int,
+) -> list[Image.Image]:
+    strip_width = max(1, text_bitmap.width + gap)
+    frame_positions = list(range(0, strip_width, max(1, step)))
+    if not frame_positions:
+        frame_positions = [0]
+    frames: list[Image.Image] = []
+    for position in frame_positions:
+        frames.append(
+            render_scroll_frame(
+                canvas,
+                text_bitmap,
+                background,
+                direction,
+                gap,
+                offset_x,
+                offset_y,
+                position,
+            )
+        )
+    return frames
+
+
 async def send_native_scroll(
     config: AppConfig,
     message: str,
@@ -144,26 +175,78 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
     )
     offset_x_base = preset.offset_x + profile.offset_x
     offset_y_base = preset.offset_y + profile.offset_y
+    mode = str(overrides.get("mode") or preset.mode)
     try:
-        if preset.mode == "scroll":
-            # Native panel-side scroll path with automatic transport selection.
-            # Keep transport logic unchanged; only source glyphs from the shared font resolver.
-            effect = overrides.get("effect") or "scroll-left"
+        if mode == "native-scroll":
+            # Native panel-side scrolling over A1 transport.
+            effect = overrides.get("effect") or ("scroll-right" if preset.direction == "right" else "scroll-left")
             native_font_profile = str(font_path) if font_path else (str(font_ref) if font_ref else "ipixel")
+            native_interval = float(overrides.get("interval") or 0.06)
             await send_native_scroll(
                 config,
                 message,
                 channel=3,
-                interval=0.06,
+                interval=native_interval,
                 fg_color=color,
                 bg_color=background,
                 font_profile=native_font_profile,
                 effect=effect,
             )
             await asyncio.sleep(0.2)
+        elif mode == "scroll":
+            gap_override = overrides.get("gap")
+            base_gap = gap_override if gap_override is not None else preset.gap
+            gap = int(base_gap) if base_gap is not None else 16
+            step_override = overrides.get("step")
+            base_step = step_override if step_override is not None else preset.step
+            step_value = int(base_step) if base_step is not None else 1
+            step = max(1, step_value)
+            interval_override = overrides.get("interval")
+            interval = float(interval_override) if interval_override is not None else float(preset.interval)
+            if interval <= 0:
+                interval = 0.02
+            interval = max(interval, 0.008)
+
+            next_tick = asyncio.get_running_loop().time()
+            async with PanelManager(config) as manager:
+                canvas = manager.canvas_size
+                frames = precompute_scroll_frames(
+                    canvas,
+                    text_bitmap,
+                    background,
+                    preset.direction,
+                    gap,
+                    offset_x_base,
+                    offset_y_base,
+                    step,
+                )
+                frame_index = 0
+                while True:
+                    frame = frames[frame_index]
+                    await manager.send_image(frame, delay=0.01)
+                    frame_index = (frame_index + 1) % len(frames)
+
+                    next_tick += interval
+                    sleep_for = next_tick - asyncio.get_running_loop().time()
+                    if sleep_for > 0:
+                        await asyncio.sleep(sleep_for)
+                    else:
+                        next_tick = asyncio.get_running_loop().time()
         else:
             async with PanelManager(config) as manager:
                 canvas = manager.canvas_size
+                # Keep original static behavior unchanged.
+                while text_bitmap.width > (canvas[0] - 2) and size > 11:
+                    size -= 1
+                    text_bitmap = build_text_bitmap(
+                        message,
+                        font_path,
+                        size,
+                        spacing,
+                        color,
+                        config.display.antialias_text,
+                        monospace_digits=True,
+                    )
                 frame = render_static_frame(
                     canvas,
                     text_bitmap,
@@ -171,8 +254,8 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
                     offset_x_base,
                     offset_y_base,
                 )
-                await manager.send_image(frame, delay=0.15)
-                await asyncio.sleep(0.2)
+                await manager.send_image(frame, delay=0.0)
+                await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         raise
     except Exception as error:
@@ -190,7 +273,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--font", type=Path)
     parser.add_argument("--size", type=int)
     parser.add_argument("--spacing", type=int)
-    parser.add_argument("--mode", choices=("static", "scroll"))
+    parser.add_argument("--mode", choices=("static", "scroll", "native-scroll"))
     parser.add_argument("--direction", choices=("left", "right"))
     parser.add_argument(
         "--effect",
