@@ -112,7 +112,7 @@ def build_content_payload(
     p[14] = channel & 0xFF
     p[19] = effect_code & 0xFF
 
-    # Native color fields (validated by AA/BB captures for white-on-black)
+    # Native color fields
     p[22:25] = bytes(fg_color)
     p[25:28] = bytes(bg_color)
     p[30:33] = bytes(fg_color)
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     ap.add_argument(
         "--validate-font",
         action="store_true",
-        help="Validate recovered native glyphs against known A/B captures and exit",
+        help="Validate reference native glyphs and exit",
     )
     args = ap.parse_args()
 

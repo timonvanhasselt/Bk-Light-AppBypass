@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """iPixel native text-scroll glyph map.
 
-The native 0x45 / 0x36 packet uses two 10-byte monochrome glyph cells.
-`A` and `B` were recovered directly from captured app packets; the rest of the
-uppercase set is reconstructed to the same bold 8x10 style so senders do not
-depend on PIL rasterization.
+Provides a reference 8x10 glyph set used by the native text sender.
+When a character is not present in this map, callers can rasterize it from a
+font (Pillow) instead.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ def _rows(*values: int) -> bytes:
     return bytes(values)
 
 
-CAPTURED_GLYPHS: Dict[str, bytes] = {
+REFERENCE_GLYPHS: Dict[str, bytes] = {
     "A": _rows(0x1C, 0x36, 0x63, 0x63, 0x63, 0x7F, 0x63, 0x63, 0x63, 0x63),
     # Stored in pre-flipped form so post-pack bit-order handling matches on-panel orientation.
     "B": _rows(0xFC, 0x66, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x66, 0x66, 0xFC),
@@ -27,8 +26,8 @@ CAPTURED_GLYPHS: Dict[str, bytes] = {
 
 GLYPHS_8X10: Dict[str, bytes] = {
     " ": _rows(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
-    "A": CAPTURED_GLYPHS["A"],
-    "B": CAPTURED_GLYPHS["B"],
+    "A": REFERENCE_GLYPHS["A"],
+    "B": REFERENCE_GLYPHS["B"],
     "C": _rows(0x3C, 0x66, 0x63, 0x60, 0x60, 0x60, 0x60, 0x63, 0x66, 0x3C),
     "D": _rows(0x3E, 0x66, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x66, 0x3E),
     "E": _rows(0x7F, 0x60, 0x60, 0x60, 0x7E, 0x60, 0x60, 0x60, 0x60, 0x7F),
@@ -57,7 +56,7 @@ GLYPHS_8X10: Dict[str, bytes] = {
 
 
 def glyph_8x10_ipixel(ch: str) -> bytes:
-    key = (ch or " ").upper()[:1]
+    key = (ch or " ")[:1]
     if not key:
         key = " "
     if key not in GLYPHS_8X10:
@@ -68,5 +67,5 @@ def glyph_8x10_ipixel(ch: str) -> bytes:
 def validate_known_glyphs() -> dict[str, bool]:
     return {
         ch: glyph_8x10_ipixel(ch) == expected
-        for ch, expected in CAPTURED_GLYPHS.items()
+        for ch, expected in REFERENCE_GLYPHS.items()
     }
