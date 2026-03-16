@@ -84,6 +84,7 @@ async def send_native_scroll(
     interval: float = 0.06,
     fg_color: tuple[int, int, int] = (255, 255, 255),
     bg_color: tuple[int, int, int] = (0, 0, 0),
+    font_profile: str = "ipixel",
     effect: str = "scroll-left",
 ) -> None:
     effect_code = EFFECT_CODES.get(effect, EFFECT_CODES["scroll-left"])
@@ -102,6 +103,7 @@ async def send_native_scroll(
             message,
             fg_color=fg_color,
             bg_color=bg_color,
+            font_profile=font_profile,
             effect_code=effect_code,
         )
         debug = packet_debug_info(payload, message)
@@ -145,7 +147,9 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
     try:
         if preset.mode == "scroll":
             # Native panel-side scroll path with automatic transport selection.
+            # Keep transport logic unchanged; only source glyphs from the shared font resolver.
             effect = overrides.get("effect") or "scroll-left"
+            native_font_profile = str(font_path) if font_path else (str(font_ref) if font_ref else "ipixel")
             await send_native_scroll(
                 config,
                 message,
@@ -153,6 +157,7 @@ async def display_text(config: AppConfig, message: str, preset_name: str, overri
                 interval=0.06,
                 fg_color=color,
                 bg_color=background,
+                font_profile=native_font_profile,
                 effect=effect,
             )
             await asyncio.sleep(0.2)
