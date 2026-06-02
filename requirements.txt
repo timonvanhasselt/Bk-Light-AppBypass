@@ -1,4 +1,4 @@
 bleak
 Pillow
 PyYAML
-
+pynput
