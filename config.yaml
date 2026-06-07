@@ -2,31 +2,31 @@ device:
   address: "31:C3:BD:32:14:7A"
   auto_reconnect: true
   reconnect_delay: 2.0
-  mtu: 2048
+  mtu: 128
   rotate: 0
-  brightness: 0.15
+  brightness: 1.0
   timezone: auto
   scan_timeout: 6.0
 
 panels:
-  tile_width: 64
-  tile_height: 16
+  tile_width: 32
+  tile_height: 32
   layout:
     columns: 1
     rows: 1
   list: ["31:C3:BD:32:14:7A"]
 
 display:
-  frame_interval: 0.05
-  max_retries: 3
-  log_notifications: false
+  frame_interval: 0.1
+  max_retries: 5
+  log_notifications: true
   antialias_text: false
 
 runtime:
   mode: clock
   preset: default
   options:
-    timezone: "Europe/Paris"
+    timezone: "Europe/Amsterdam"
     
 presets:
   clock:
@@ -45,39 +45,39 @@ presets:
       color: "#FF0000"
       background: "#000000"
       font: null
-      size: 18
+      size: 16
       spacing: 1
       mode: static
       direction: left
-      speed: 24.0
+      speed: 10.0
       gap: 32
       offset_x: 0
       offset_y: 0
-      interval: 0.05
+      interval: 0.1
     marquee_left:
       color: "#00FFAA"
       background: "#000000"
       mode: scroll
       direction: left
-      speed: 30.0
-      step: 3
+      speed: 10.0
+      step: 1
       gap: 32
-      size: 18
+      size: 16
       spacing: 2
       offset_y: 0
-      interval: 0.04
+      interval: 0.1
     marquee_right:
       color: "#FFFFFF"
       background: "#000000"
       mode: scroll
       direction: right
-      speed: 20.0
-      step: 2
+      speed: 10.0
+      step: 1
       gap: 48
-      size: 20
+      size: 16
       spacing: 1
-      offset_y: -2
-      interval: 0.05
+      offset_y: 0
+      interval: 0.1
   image:
     default:
       mode: fit
@@ -89,5 +89,3 @@ presets:
       start: 0
       count: 10
       delay: 1.0
-
-
